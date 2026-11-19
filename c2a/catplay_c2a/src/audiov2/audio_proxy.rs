@@ -9,6 +9,7 @@ use catplay_carplay::{
 use log::{debug, error};
 
 use crate::proxy::pcm_proxy::PcmProxyPlayer;
+use crate::EqConfig;
 
 pub struct AudioProxyUtil;
 
@@ -21,6 +22,7 @@ impl AudioProxyUtil {
         audio_format: AudioFormat,
         pcm_format: AudioStreamBasicDescription,
         duplex: bool,
+        eq: EqConfig,
     ) -> RtspResult<(AudioPlayerBox<i16>, Option<AudioRecorderBox<i16>>)> {
         debug!(
             "Starting stream {stream_type:?} with {audio_format:?}; mapped pcm is {:?}",
@@ -30,7 +32,11 @@ impl AudioProxyUtil {
 
         // Open a proxy audio stream towards the car
 
-        let audio_pair = PcmProxyPlayer::pair();
+        let audio_pair = if audio_type == AudioType::Media {
+            PcmProxyPlayer::pair_with_eq(&eq, Some(&pcm_format))
+        } else {
+            PcmProxyPlayer::pair()
+        };
         let mut mic_player = None;
         let mut pending_mic = None;
 

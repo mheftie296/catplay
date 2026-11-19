@@ -24,6 +24,7 @@ use std::{
 };
 
 use crate::{
+    EqConfig,
     audiov2::AudioProxyUtil,
     proxy_rpc::{
         AltScreenManager, ModesArbiter, TxAdapterOp, car_to_iphone_command_task::CarToIphoneCommandTask, overlay_manager::OverlayManager,
@@ -33,6 +34,7 @@ use crate::{
 use super::audio_info::filter_audio_sample_rates;
 
 pub struct CarManager {
+    eq: EqConfig,
     // TODO dont wrap the ref with TeardownGuard...
     car_state: TeardownGuard<AirPlayTransmitterProxyRef>,
     car_had_record: bool,
@@ -86,6 +88,7 @@ impl CarManager {
         car: TeardownGuard<AirPlayTransmitterProxyRef>,
         proxy_rx: mpsc::UnboundedReceiver<TxAdapterOp>,
         persist_dir: Option<PathBuf>,
+        eq: EqConfig,
     ) -> RtspResult<Self> {
         let info = car.info_cached();
         let car_media_clock = car.media_clock();
@@ -100,6 +103,7 @@ impl CarManager {
         let overlay = OverlayManager::new(width, height, fps, dpi, persist_dir);
 
         Ok(Self {
+            eq,
             car_media_clock,
             car_had_record: false,
             iphone_peer: None,
@@ -420,7 +424,8 @@ impl CarManager {
                 response,
             } => {
                 let tx = self.car_state.clone();
-                let fut = AudioProxyUtil::open_audio(tx, latency, stream_type, audio_type, audio_format, pcm_format, duplex);
+                let eq = self.eq.clone();
+                let fut = AudioProxyUtil::open_audio(tx, latency, stream_type, audio_type, audio_format, pcm_format, duplex, eq);
                 self.tx_queue.push_back(
                     async move {
                         // Audio setup may fail, but don't treat it as full sanity error - let iPhone decide what it wants to do next

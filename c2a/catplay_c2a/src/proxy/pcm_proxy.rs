@@ -11,6 +11,102 @@ use catplay_carplay::{
 };
 use tokio::{sync::Notify, task::JoinHandle};
 
+use crate::EqConfig;
+
+#[derive(Clone)]
+struct Biquad {
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    a1: f64,
+    a2: f64,
+    z1: f64,
+    z2: f64,
+}
+
+impl Biquad {
+    fn peaking(sample_rate: f64, frequency: f64, gain_db: f64, q: f64) -> Option<Self> {
+        if !(sample_rate > 0.0)
+            || !(frequency > 0.0 && frequency < sample_rate * 0.5)
+            || !gain_db.is_finite()
+            || !q.is_finite()
+            || q <= 0.0
+        {
+            return None;
+        }
+        let gain = gain_db.clamp(-24.0, 24.0);
+        let omega = 2.0 * std::f64::consts::PI * frequency / sample_rate;
+        let alpha = omega.sin() / (2.0 * q);
+        let amplitude = 10.0_f64.powf(gain / 40.0);
+        let cos = omega.cos();
+        let b0 = 1.0 + alpha * amplitude;
+        let b1 = -2.0 * cos;
+        let b2 = 1.0 - alpha * amplitude;
+        let a0 = 1.0 + alpha / amplitude;
+        let a1 = -2.0 * cos;
+        let a2 = 1.0 - alpha / amplitude;
+        Some(Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            z1: 0.0,
+            z2: 0.0,
+        })
+    }
+
+    fn process(&mut self, input: f64) -> f64 {
+        let output = input * self.b0 + self.z1;
+        self.z1 = input * self.b1 - output * self.a1 + self.z2;
+        self.z2 = input * self.b2 - output * self.a2;
+        output
+    }
+}
+
+#[derive(Default)]
+struct EqProcessor {
+    channels: Vec<Vec<Biquad>>,
+}
+
+impl EqProcessor {
+    fn new(format: &AudioStreamBasicDescription, config: &EqConfig) -> Self {
+        if !config.enabled || config.bands.is_empty() {
+            return Self::default();
+        }
+        let channels = format.channels() as usize;
+        let mut channel_filters = Vec::with_capacity(channels);
+        for _ in 0..channels {
+            channel_filters.push(
+                config
+                    .bands
+                    .iter()
+                    .filter_map(|band| {
+                        Biquad::peaking(format.sample_rate as f64, band.frequency as f64, band.gain_db as f64, band.q as f64)
+                    })
+                    .collect(),
+            );
+        }
+        Self { channels: channel_filters }
+    }
+
+    fn process(&mut self, samples: &mut [i16], channels: usize) {
+        if self.channels.is_empty() {
+            return;
+        }
+        for (index, sample) in samples.iter_mut().enumerate() {
+            let channel = index % channels;
+            let mut value = f64::from(*sample);
+            if let Some(filters) = self.channels.get_mut(channel) {
+                for filter in filters {
+                    value = filter.process(value);
+                }
+            }
+            *sample = value.clamp(i16::MIN as f64, i16::MAX as f64) as i16;
+        }
+    }
+}
+
 #[derive(Default)]
 struct ProxyState {
     source: Option<RingConsumer<i16>>,
@@ -19,6 +115,8 @@ struct ProxyState {
     playing: bool,
     recorder_ready: bool,
     stopped: bool,
+    eq: EqProcessor,
+    channels: usize,
 }
 
 #[derive(Default)]
@@ -53,11 +151,28 @@ impl ProxyShared {
             control,
             playing,
             recorder_ready,
+            eq,
+            channels,
             ..
         } = &mut *state;
         if let (Some(source), Some(destination), Some(control)) = (source, destination, control) {
             if *playing && *recorder_ready {
-                let transferred = destination.transfer_from(source);
+                let mut transferred = 0usize;
+                let free = destination.capacity().saturating_sub(
+                    destination.stat().written.saturating_sub(destination.stat().consumed)
+                );
+                for segment in source.iter_segments(free, false) {
+                    match segment {
+                        RingSegment::Data(samples) => {
+                            let mut processed = samples.to_vec();
+                            eq.process(&mut processed, *channels);
+                            destination.write(&processed);
+                        }
+                        RingSegment::Gap(n) | RingSegment::Overflow(n) => destination.advance_timeline(n),
+                        RingSegment::Underflow(_) => unreachable!(),
+                    }
+                    transferred += segment.len();
+                }
                 if transferred > 0 {
                     control.added_data_to_ring();
                 }
@@ -80,7 +195,17 @@ pub struct PcmProxyPlayer {
 
 impl PcmProxyPlayer {
     pub fn pair() -> (PcmProxyPlayer, PcmProxyRecorder) {
+        Self::pair_with_eq(&EqConfig::default(), None)
+    }
+
+    pub fn pair_with_eq(eq: &EqConfig, format: Option<&AudioStreamBasicDescription>) -> (PcmProxyPlayer, PcmProxyRecorder) {
         let shared = Arc::new(ProxyShared::default());
+        if let Some(format) = format {
+            if let Ok(mut state) = shared.state.lock() {
+                state.eq = EqProcessor::new(format, eq);
+                state.channels = format.channels() as usize;
+            }
+        }
         let worker = shared.clone();
         let task = tokio::spawn(async move {
             loop {
@@ -206,6 +331,24 @@ mod tests {
     use super::*;
     use catplay_carplay::audio::{RingBuffer, RingSegment};
     use std::time::Duration;
+
+    #[test]
+    fn eq_processor_clamps_output_and_is_channel_independent() {
+        let format = format();
+        let eq = EqConfig {
+            enabled: true,
+            bands: vec![crate::EqBandConfig {
+                frequency: 1000.0,
+                gain_db: 12.0,
+                q: 1.0,
+            }],
+        };
+        let mut processor = EqProcessor::new(&format, &eq);
+        let mut samples = [i16::MAX, i16::MIN, i16::MAX, i16::MIN];
+        processor.process(&mut samples, 2);
+        assert!(samples.iter().all(|sample| *sample >= i16::MIN && *sample <= i16::MAX));
+        assert_ne!(samples, [i16::MAX, i16::MIN, i16::MAX, i16::MIN]);
+    }
 
     fn format() -> AudioStreamBasicDescription {
         AudioStreamBasicDescription::fill_pcm(48_000, 16, 16, 2, false)
