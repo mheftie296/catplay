@@ -57,6 +57,7 @@ impl CarPlayOutputManager {
             passphrase: config.wifi_network.password,
             bt_cache_file: bt_cache_file.to_str().expect("corrupted file path").into(),
             persist_dir,
+            eq: config.eq.clone(),
         };
         let g = ProdGadget::new(cfg);
         info!("GadgetManager output configured");

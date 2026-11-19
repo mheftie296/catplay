@@ -19,7 +19,7 @@ use catplay_util::{
 use log::{debug, error, info};
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::proxy_rpc::{CarManager, CarPlayRxSession, TxAdapter, TxAdapterOp};
+use crate::{EqConfig, proxy_rpc::{CarManager, CarPlayRxSession, TxAdapter, TxAdapterOp}};
 
 pub struct ProdGadgetConfig {
     pub homekit_rx: HomekitStorageRef,
@@ -41,6 +41,7 @@ pub struct ProdGadgetConfig {
 
     pub bt_cache_file: String,
     pub persist_dir: Option<PathBuf>,
+    pub eq: EqConfig,
 }
 
 pub struct ProdGadget {
@@ -261,7 +262,7 @@ impl Reconcilable for ProdGadget {
             let proxy_chan = mpsc::unbounded();
             let car_state = ProdGadgetSession { proxy_tx: proxy_chan.0 };
 
-            let transmitter2 = CarManager::new(transmitter, proxy_chan.1, self.cfg.persist_dir.clone());
+            let transmitter2 = CarManager::new(transmitter, proxy_chan.1, self.cfg.persist_dir.clone(), self.cfg.eq.clone());
             transmitter2.await.expect("TODO").background();
             self.last_tx.lock().unwrap().replace(car_state);
         }

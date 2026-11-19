@@ -54,7 +54,6 @@ pub enum TxAdapterOp {
         audio_format: AudioFormat,
         pcm_format: AudioStreamBasicDescription,
         duplex: bool,
-
         response: oneshot::Sender<RtspResult<(AudioPlayerBox<i16>, Option<AudioRecorderBox<i16>>)>>,
     },
 }

@@ -4,6 +4,8 @@ use serde::Deserialize;
 pub struct AppConfig {
     pub debug: bool,
     pub persist_dir: Option<String>,
+    #[serde(default)]
+    pub eq: EqConfig,
 
     pub mfi: MfiConfig,
     pub bluetooth: BluetoothConfig,
@@ -12,6 +14,19 @@ pub struct AppConfig {
     pub wifi_network: WifiNetwork,
 
     pub gadget: GadgetConfig,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct EqConfig {
+    pub enabled: bool,
+    pub bands: Vec<EqBandConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct EqBandConfig {
+    pub frequency: f32,
+    pub gain_db: f32,
+    pub q: f32,
 }
 
 // MFI start
