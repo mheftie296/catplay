@@ -1,4 +1,4 @@
-FROM rust:1.92
+FROM rust:1.94
 
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y \
     libyuv-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://downloads.sourceforge.net/libjpeg-turbo/libjpeg-turbo-3.0.1.tar.gz -o /tmp/libjpeg-turbo.tar.gz \
+RUN curl -fsSL https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.1/libjpeg-turbo-3.0.1.tar.gz -o /tmp/libjpeg-turbo.tar.gz \
     && tar -xzf /tmp/libjpeg-turbo.tar.gz -C /tmp \
     && cmake -S /tmp/libjpeg-turbo-3.0.1 -B /tmp/libjpeg-turbo-build \
         -DCMAKE_BUILD_TYPE=Release \

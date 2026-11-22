@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use catplay_carplay::{
     audio::{
         AudioPlayer, AudioPlayerEvent, AudioRecorder, AudioRecorderControl, AudioRecorderEvent, AudioStreamBasicDescription, RingConsumer,
-        RingProducer,
+        RingProducer, RingSegment,
     },
     carplay_tx::TeardownGuard,
     msg::StreamType,
